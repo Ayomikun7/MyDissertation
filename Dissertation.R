@@ -41,19 +41,36 @@ joined_df <-
   left_join(lg_2069_cln, by = "patient_id") %>% 
   mutate(race_category = coalesce(race_category.x, race_category.y)) # fills in NA by merging two race_category cols
 
-category_counts <- table(joined_df_cln$race_category)
+joined_df1 <- joined_df %>%
+  mutate(race_category = case_when(
+    race_category %in% c("White", "Black", "Black or African American") ~ race_category,
+    race_category == "Asian" ~ "Others",
+    TRUE ~ "Others"
+  ))
+
+joined_df2 <- joined_df1 %>%
+  mutate(race_category = case_when(
+    race_category == "White" ~ "White",
+    race_category %in% c("Black", "Black or African American") ~ "Black",
+    TRUE ~ "Others"
+  ))
+
+unique(joined_df2$race_category)
+
+
+category_counts <- table(joined_df2$race_category)
 print(category_counts)
 
 
 
 # there are 24 non-concordant patient IDs so this is as good as it gets - could filter later to remove missingness
-joined_df %>%
+joined_df2 %>%
   select(starts_with("race_")) %>% 
   summarise(across(everything(), ~ sum(is.na(.))))
 
 # clean joined data frame: select vars of interest/remove duplicate vars, re-code chr to fct/lgcl etc., filter rows
 joined_df_cln <- 
-  joined_df %>% 
+  joined_df2 %>% 
   select(everything()) %>% # replace everything() with only vars you want to keep
   mutate(
     across(where(is_character), as_factor),
@@ -64,6 +81,16 @@ joined_df_cln <-
     
   ) %>% 
   filter(!is.na(race_category))
+
+
+
+
+
+
+
+
+
+
 
 
 # fit survival model ------------------------------------------------------
@@ -124,8 +151,8 @@ ggsurvplot(
   ncensor.plot = TRUE,      # plot the number of censored subjects at time t
   surv.median.line = "hv",  # add the median survival pointer.
   legend.labs = 
-    c("White", "Black or African American", "Other", "Black", "Asian"),    # change legend labels.
-
+    c("White","Other", "Black"),    # change legend labels.
+  
 )
 
 summary(fit)$table
@@ -166,4 +193,68 @@ surv_diff <- survdiff(Surv(overall_survival_since_sample_collection_months, surv
 )
 surv_diff
 
+
+require("survival")
+fit2 <- survfit( Surv(time, status) ~ sex + rx + adhere,
+                 data = colon )
+
+fit2 <- 
+  survfit(
+    Surv(overall_survival_since_sample_collection_months, survival_status) ~ race_category + androgen_deprivation_therapy_adt + disease_volume,
+    data = joined_df_cln
+  )
+
+ggsurv <- ggsurvplot(fit2, fun = "event", conf.int = TRUE,
+                     ggtheme = theme_bw())
+
+ggsurv$plot +theme_bw() + 
+  theme (legend.position = "right")+
+  facet_grid(androgen_deprivation_therapy_adt ~  disease_volume)
+
+#Compute the Cox model
+res.cox <- coxph(Surv(overall_survival_since_sample_collection_months, survival_status) ~ race_category,
+                  data = joined_df_cln
+)
+res.cox
+
+summary(res.cox)
+
+
+covariates <- c("age", "sex",  "ph.karno", "ph.ecog", "wt.loss")
+univ_formulas <- sapply(covariates,
+                        function(x) as.formula(paste('Surv(time, status)~', x)))
+
+univ_models <- lapply( univ_formulas, function(x){coxph(x, data = lung)})
+
+#Multivariate Cox regression analysis
+res.cox <- coxph(Surv(time, status) ~ age + sex + ph.ecog, data =  lung)
+summary(res.cox)
+
+res.cox1 <- coxph(Surv(overall_survival_since_sample_collection_months, survival_status) ~ race_category + age_at_sample_collection + biopsy_gleason_grade + androgen_deprivation_therapy_adt + timing_of_metastases + disease_volume + fraction_genome_altered.x + castration_resistance_event + mutation_count.x + tmb_nonsynonymous.x + prostate_specific_antigen.x + smoking + tissue_site,
+                 data = joined_df_cln
+)
+summary(res.cox1)
+
+
+
+#Using dplyr package's select function:
+joined_df_cln_selected <- joined_df_cln %>% select(patient_id, race_category, age_at_diagnosis, androgen_deprivation_therapy_adt,timing_of_metastases, time_from_sample_to_castration_resistance_months, overall_survival_since_sample_collection_months, fraction_genome_altered.x, prostate_specific_antigen.x, smoking, tmb_nonsynonymous.y, survival_status, patients_vital_status, castration_resistance_event, disease_volume )
+sum(is.na(joined_df_cln_selected))
+colSums(is.na(joined_df_cln_selected))
+
+summary(joined_df_cln_selected)
+
+
+
+glimpse(joined_df_cln_selected)
+typeof(joined_df_cln_selected$race_category)
+
+#Quick Data Visualization
+#R base plot
+plot(joined_df_cln_selected)
+
+#Scatter plot
+plot(joined_df_cln_selected$race_category, joined_df_cln_selected$overall_survival_since_sample_collection_months, col ='red')
+
+plot(joined_df_cln_selected$race_category, joined_df_cln_selected$time_from_sample_to_castration_resistance_months, col = 'blue')
 
